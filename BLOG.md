@@ -366,7 +366,6 @@ Then: open the source firewall for the Aiven service (Aiven static IPs help if y
 
 The version jump is free. A PostgreSQL 13 on RDS can publish to PostgreSQL 18 on Aiven in one go; there is no "upgrade in sequence" rule for logical replication the way there is for in-place upgrades. Extensions are the thing to check: every extension on the source needs to exist on the target version, and Aiven's extension list per version is public.
 
-A word on scale, because the demo is deliberately small. Sixteen beers and thirty thousand tastings replicate in seconds; a 2 TB database with 400 tables, or sixty databases spread across three teams, do not. The procedure is the same for both: schema first, publication, subscription, drain, cutover. What grows with size is everything around the procedure. An inventory of databases, extensions, roles, large objects and tables without primary keys. A sequence that decides which workloads move first and which share a cutover window. Rehearsals against forks or restored backups until the runbook is boring. Explicit rollback criteria, and a person who owns the go decision. Capacity for the initial copy, which takes as long as a `COPY` of your largest table takes, and for the WAL the source retains while it runs. A large migration is a project with a plan, test runs and a strategy for the order of things, and the SQL in this post is the part of that project that does not get harder. For the part that does, Aiven's teams have done this many times: in-house expertise for the assessment and the plan, and a partner network for implementations that need more hands than a blog post provides. The right moment to talk is before the first replication slot exists, not after the first disk is full.
 
 
 Or skip all of it and let Aiven's migration do the same thing:
@@ -383,6 +382,10 @@ avn service migration-status --project $AVN_PROJECT pg-target-18
 ```
 
 The wizard uses logical replication for every database that meets the preconditions and falls back to `pg_dump` for the ones that do not. You now know what those preconditions are, and you know that it will not carry your large objects either.
+
+## When the migration is big: scale, planning, and who helps
+
+The demo is deliberately small. Sixteen beers and thirty thousand tastings replicate in seconds; a 2 TB database with 400 tables, or sixty databases spread across three teams, do not. The procedure is the same for both: schema first, publication, subscription, drain, cutover. What grows with size is everything around the procedure. An inventory of databases, extensions, roles, large objects and tables without primary keys. A sequence that decides which workloads move first and which share a cutover window. Rehearsals against forks or restored backups until the runbook is boring. Explicit rollback criteria, and a person who owns the go decision. Capacity for the initial copy, which takes as long as a `COPY` of your largest table takes, and for the WAL the source retains while it runs. A large migration is a project with a plan, test runs and a strategy for the order of things, and the SQL in this post is the part of that project that does not get harder. For the part that does, Aiven's teams have done this many times: in-house expertise for the assessment and the plan, and a partner network for implementations that need more hands than a blog post provides. The right moment to talk is before the first replication slot exists, not after the first disk is full.
 
 ## What PostgreSQL 18 changed for logical replication
 
