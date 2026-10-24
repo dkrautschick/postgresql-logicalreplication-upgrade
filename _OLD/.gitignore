@@ -1,5 +1,0 @@
-.env
-schema-from-source.sql
-setval-from-source.sql
-terraform/.terraform/
-terraform/*.tfstate*
