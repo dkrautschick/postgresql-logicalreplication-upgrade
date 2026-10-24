@@ -351,7 +351,7 @@ The subscription stays until you decide you are done. If you want a real safety 
 
 ### 9. Clean up, especially the slot
 
-Skipping this step is how a finished migration fills a production disk: an orphaned slot keeps every WAL segment forever. `scripts/09_cleanup.sh` drops the subscription (which drops the slot on the publisher), then checks that nothing was left behind:
+Skipping this step is how a finished migration fills a production disk: an orphaned slot keeps every WAL segment until you drop it. `scripts/09_cleanup.sh` drops the subscription (which drops the slot on the publisher), then checks that nothing was left behind:
 
 ```
 -- on the publisher: this should not list your slot any more
@@ -439,4 +439,4 @@ Still not on the list: DDL replication and large objects. Plan for both the way 
 - Check three things before any migration: replica identities, large objects, and extensions on the target version. Check one thing after: no orphaned slot on the source.
 - Next step: clone the repository and run script 01.
 
-Builders who run production databases rarely get a rollback this clean. Clone [the repository](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade), set `AVN_PROJECT`, and run the scripts in order. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Which is, after all, the whole point.
+Builders who run production databases get a rollback path that `pg_upgrade` cannot offer. Clone [the repository](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade), set `AVN_PROJECT`, and run the scripts in order. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Which is, after all, the whole point.
