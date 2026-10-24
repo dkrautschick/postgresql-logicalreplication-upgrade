@@ -1,6 +1,6 @@
 # Two elephants, one WAL: upgrade PostgreSQL 15 to 18, or migrate from RDS, Cloud SQL and Azure to Aiven, with logical replication and without a maintenance window
 
-*All scripts in this post live in the companion repository `pg-logical-upgrade-demo`. Every step references a numbered script you can run against your own Aiven project. The demo database is a craft-beer taproom, because every example database should contain at least one Doppelbock.*
+*All scripts in this post live in the companion repository `pg-logical-upgrade-demo`. Every step references a numbered script you can run against your own Aiven project. The demo database is a craft-beer beerdb, because every example database should contain at least one Doppelbock.*
 
 ## The maintenance window is a myth
 
@@ -101,7 +101,7 @@ The repository has `scripts/12_ddl_during_migration.sh`, which adds a column (`b
 
 ```sql
 -- on the target, after the DDL exists on both sides
-SELECT aiven_extras.pg_alter_subscription_refresh_publication('sub_taproom_from_pg15', TRUE);
+SELECT aiven_extras.pg_alter_subscription_refresh_publication('sub_beerdb_from_pg15', TRUE);
 
 -- did the new table join the party?
 SELECT srrelid::regclass AS table_name, srsubstate
@@ -145,7 +145,7 @@ A third, smaller item in the same family: **sequences.** Identity columns and se
 
 ## The demo: PostgreSQL 15 → 18 (or anywhere → Aiven) in a dozen scripts
 
-The repository builds a small craft-beer taproom: eight breweries with names only a DBA could love (WAL Street Brewery, Vacuum Full Brewing, Nullpointer Ales), sixteen beers from Kölsch 9.4 to Streaming Stout, five pubs, 30,000 tastings, a keg log with no primary key, a brew batch sequence, a stored generated column for the price per litre, and a label image per beer stored as a large object. A demo without the annoying parts teaches nothing.
+The repository builds a small craft-beer beerdb: eight breweries with names only a DBA could love (WAL Street Brewery, Vacuum Full Brewing, Nullpointer Ales), sixteen beers from Kölsch 9.4 to Streaming Stout, five pubs, 30,000 tastings, a keg log with no primary key, a brew batch sequence, a stored generated column for the price per litre, and a label image per beer stored as a large object. A demo without the annoying parts teaches nothing.
 
 ### 1. Two services, one command each
 
@@ -158,7 +158,7 @@ avn service wait --project $AVN_PROJECT pg-source-15
 avn service wait --project $AVN_PROJECT pg-target-18
 ```
 
-`scripts/01_create_services.sh` does this, creates the `taproom` database on both, and then checks what it created:
+`scripts/01_create_services.sh` does this, creates the `beerdb` database on both, and then checks what it created:
 
 ```sql
 SELECT version();                           -- on both
@@ -214,23 +214,23 @@ It applies `ALTER TABLE tap_log REPLICA IDENTITY FULL` (in a real migration you 
 ```sql
 CREATE EXTENSION IF NOT EXISTS aiven_extras CASCADE;
 SELECT aiven_extras.pg_create_publication_for_all_tables(
-  'pub_taproom_all', 'INSERT,UPDATE,DELETE,TRUNCATE');
+  'pub_beerdb_all', 'INSERT,UPDATE,DELETE,TRUNCATE');
 
 -- what is in it?
-SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'pub_taproom_all';
+SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'pub_beerdb_all';
 ```
 
-On a non-Aiven source the same script runs plain `CREATE PUBLICATION pub_taproom_all FOR ALL TABLES`, which `rds_superuser`, `cloudsqlsuperuser` and `azure_pg_admin` are allowed to do.
+On a non-Aiven source the same script runs plain `CREATE PUBLICATION pub_beerdb_all FOR ALL TABLES`, which `rds_superuser`, `cloudsqlsuperuser` and `azure_pg_admin` are allowed to do.
 
 ### 4. Subscribe, then wait for every table to say "r"
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS aiven_extras CASCADE;
 SELECT aiven_extras.pg_create_subscription(
-  'sub_taproom_from_pg15',
-  'host=pg-source-15-....aivencloud.com port=12345 dbname=taproom user=avnadmin password=... sslmode=require',
-  'pub_taproom_all',
-  'slot_taproom_to_pg18',
+  'sub_beerdb_from_pg15',
+  'host=pg-source-15-....aivencloud.com port=12345 dbname=beerdb user=avnadmin password=... sslmode=require',
+  'pub_beerdb_all',
+  'slot_beerdb_to_pg18',
   TRUE,   -- create the slot on the publisher
   TRUE);  -- copy_data: snapshot every table first, then stream
 ```
@@ -315,7 +315,7 @@ Run the script while load is active and the table hashes differ, which is correc
 
 `scripts/08_cutover.sh` asks for confirmation and then does six things:
 
-1. **Block writes on the source.** `ALTER DATABASE taproom SET default_transaction_read_only = on`, then terminate existing application sessions, because the setting only applies to new ones. (On RDS or Cloud SQL you would do the same, or revoke `CONNECT` from the application role.)
+1. **Block writes on the source.** `ALTER DATABASE beerdb SET default_transaction_read_only = on`, then terminate existing application sessions, because the setting only applies to new ones. (On RDS or Cloud SQL you would do the same, or revoke `CONNECT` from the application role.)
 2. **Drain.** Write one last marker row into `tap_log` and wait until it arrives on the target, then confirm zero lag (query below).
 3. **Copy the large objects** with `scripts/11_copy_large_objects.sh`, now that nobody can change them, and compare the content hash on both sides.
 4. **Sync sequences.** On the source, `pg_sequences` knows every `last_value`, identity columns included. The script turns that into `setval()` statements and runs them on the target (query below). Skip this and your first `INSERT` on the new server collides with an existing primary key. Everybody does this exactly once.
@@ -373,7 +373,7 @@ avn service update --project $AVN_PROJECT \
   -c migration.host=mydb.abc123.eu-central-1.rds.amazonaws.com \
   -c migration.port=5432 -c migration.ssl=true \
   -c migration.username=postgres -c migration.password=... \
-  -c migration.dbname=taproom -c migration.method=replication \
+  -c migration.dbname=beerdb -c migration.method=replication \
   pg-target-18
 
 avn service migration-status --project $AVN_PROJECT pg-target-18
