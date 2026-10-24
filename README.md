@@ -4,7 +4,7 @@ Companion repository for the blog post *"Two elephants, one WAL: upgrade Postgre
 migrate from RDS, Cloud SQL and Azure to Aiven with logical replication, without a maintenance window"*.
 
 The scripts build a PostgreSQL 15 service and a PostgreSQL 18 service on Aiven, fill the source with a
-small craft-beer taproom database (breweries, beers, pubs, tastings, label images as large objects),
+small craft-beer beerdb database (breweries, beers, pubs, tastings, label images as large objects),
 and set up a logical replication link between them. Then they generate load, check the replication from
 both ends, verify the data, demonstrate a schema change mid-flight, copy the large objects, and perform
 the cutover.
@@ -26,7 +26,7 @@ somewhere else.
 
 ```bash
 cp .env.example .env               # set AVN_PROJECT at minimum
-scripts/01_create_services.sh       # two services + database 'taproom' on both   (~5 min)
+scripts/01_create_services.sh       # two services + database 'beerdb' on both   (~5 min)
 scripts/02_schema_and_seed.sh       # schema + data on source, schema only on target
 scripts/03_setup_publication.sh     # preflight checks, replica identity, CREATE PUBLICATION (source)
 scripts/04_setup_subscription.sh    # CREATE SUBSCRIPTION via aiven_extras, wait for initial sync (target)
