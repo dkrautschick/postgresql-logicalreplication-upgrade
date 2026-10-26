@@ -1,22 +1,22 @@
-# Two elephants, one WAL
+# Move the elephant, keep the lights on
 
-### How to upgrade PostgreSQL 15 to 18, or migrate from RDS, Cloud SQL and Azure to Aiven, with seconds of downtime: one logical replication recipe, a numbered script for every step and a Doppelbock for the road
+### How to upgrade PostgreSQL to a new major version, or migrate from RDS, Cloud SQL and Azure to Aiven, with seconds of downtime: one logical replication recipe, a numbered script for every step and not a drop of beer spilled
 
 *All scripts in this post live in the companion repository [dkrautschick/postgresql-logicalreplication-upgrade](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
 
 ## Shrink the maintenance window to seconds
 
-You can upgrade PostgreSQL® 15 to 18, or move a database from RDS, Cloud SQL or Azure to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command, powered by [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (more on that below). The scripts are for when it does not.
+You can upgrade PostgreSQL® to a new major version, or move a database from RDS, Cloud SQL or Azure to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. The demo upgrades PostgreSQL 15 to 18, but the method does not depend on those two numbers: it works for any upgrade from PostgreSQL 10 (the first release with built-in logical replication) or newer to a later version. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command, powered by [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (more on that below). The scripts are for when it does not.
 
 The clock is real. PostgreSQL 14 reaches end of life on 12 November 2026, and 15 follows in November 2027. After end of life the PostgreSQL community stops publishing fixes, so Aiven can no longer support that version and the upgrade falls to you. The question is never *if* you upgrade. It is how many minutes of "we're sorry, we'll be right back" you are willing to put in front of your users.
 
-The classic answer, `pg_upgrade`, is fast and well tested. On Aiven it is a single click (or `avn service update -c pg_version=18`) and finishes in about a minute for small databases. But it has two properties that make architects nervous: the database is unavailable while it runs, and the upgrade is one-way. Your only route back is restoring a backup or a fork, and you lose every write made since.
+The classic answer, `pg_upgrade`, is fast and well tested. On Aiven it is a single click (or `avn service update -c pg_version=NEW_VERSION`) and finishes in about a minute for small databases. But it has two properties that make architects nervous: the database is unavailable while it runs, and the upgrade is one-way. Your only route back is restoring a backup or a fork, and you lose every write made since.
 
 Logical replication offers a different deal. You build the new server next to the old one, let it catch up while production keeps running, verify everything at your own pace, and then flip a connection string. The old server stays intact as a rollback.
 
-**Logical replication does not care where the old server is.** To a PostgreSQL 18 subscriber on Aiven, a PostgreSQL 15 publisher on Aiven, an Amazon RDS instance, a Google Cloud SQL instance, an Azure Flexible Server or a box under somebody's desk all look the same: a hostname, a port, a publication. The procedure for a major upgrade and the procedure for a migration to Aiven are the same procedure. Only the source changes. Every script and every check in this post works for both, and the repository has a switch for it.
+**Logical replication does not care where the old server is.** To the subscriber on the new version (PostgreSQL 18 in our demo), a publisher on an older Aiven service (PostgreSQL 15 in our demo), an Amazon RDS instance, a Google Cloud SQL instance, an Azure Flexible Server or a box under somebody's desk all look the same: a hostname, a port, a publication. The procedure for a major upgrade and the procedure for a migration to Aiven are the same procedure. Only the source changes. Every script and every check in this post works for both, and the repository has a switch for it.
 
-We start with what logical replication is and what it refuses to carry (DDL and large objects). Then we upgrade a PostgreSQL 15 service to 18 on Aiven with a check at every step, because "it replicated" and "the data is correct" are two different sentences.
+We start with what logical replication is and what it refuses to carry (DDL and large objects). Then we walk through a full upgrade on Aiven, from PostgreSQL 15 to 18 in our demo, with a check at every step, because "it replicated" and "the data is correct" are two different sentences.
 
 ## Physical versus logical: photocopier versus phone call
 
@@ -150,6 +150,8 @@ pg_restore --dbname="$DST_URI" --data-only --no-owner --exit-on-error large-obje
 A third, smaller item in the same family: **sequences.** Identity columns and serials keep working on the target, but their sequences start where the empty target started. You sync them at cutover (step 8 below). PostgreSQL 19 replicates them natively.
 
 ## The demo: PostgreSQL 15 → 18 (or anywhere → Aiven) in a dozen scripts
+
+The versions are examples. For any other upgrade path the steps stay identical and only the version numbers change.
 
 The repository builds `beerdb`, a small craft-beer database: eight breweries with names only a DBA could love (WAL Street Brewery, Vacuum Full Brewing, Nullpointer Ales), sixteen beers from Kölsch 9.4 to Streaming Stout, five pubs, 30,000 tastings, a keg log with no primary key, a brew batch sequence, a stored generated column for the price per litre, and a label image per beer stored as a large object. A demo without the annoying parts teaches nothing.
 

@@ -1,6 +1,6 @@
-# TL;DR: Two elephants, one WAL
+# TL;DR: Move the elephant, keep the lights on
 
-> Upgrade PostgreSQL® 15 to 18, or migrate from RDS, Cloud SQL or Azure to Aiven, with **seconds of downtime** instead of a maintenance window. Both jobs use the same logical replication procedure. Only the source hostname changes.
+> Upgrade PostgreSQL® to a new major version, or migrate from RDS, Cloud SQL or Azure to Aiven, with **seconds of downtime** instead of a maintenance window. The demo goes from 15 to 18, but the method works for any upgrade from PostgreSQL 10 or newer. Both jobs use the same logical replication procedure. Only the source hostname changes.
 
 ## Why now
 
