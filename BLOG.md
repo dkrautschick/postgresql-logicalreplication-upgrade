@@ -1,6 +1,6 @@
 # Move the elephant, keep the lights on
 
-### How to upgrade PostgreSQL to a new major version, or migrate from RDS, Cloud SQL and Azure to Aiven, with seconds of downtime: one logical replication recipe, a numbered script for every step and not a drop of beer spilled
+### How to upgrade PostgreSQL or migrate from RDS, Cloud SQL and Azure to Aiven with logical replication, seconds of downtime and not a drop of beer spilled
 
 *All scripts in this post live in the companion repository [dkrautschick/postgresql-logicalreplication-upgrade](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
 
@@ -85,7 +85,9 @@ A few platform facts before we start typing:
 - `wal_level` is `logical` on every Aiven for PostgreSQL service. Nothing to configure, no restart.
 - `aiven_extras` is preinstalled. Its functions run the superuser-only statements (`CREATE SUBSCRIPTION`, `CREATE PUBLICATION FOR ALL TABLES`, `ALTER SUBSCRIPTION ... REFRESH PUBLICATION`) on your behalf.
 - Replication slots are recreated after failovers and maintenance updates. On Aiven they are *not* carried over an in-place major version upgrade, so finish logical migrations before you upgrade a publisher in place.
-- Aiven's built-in migration (`avn service update -c migration.host=... -c migration.method=replication`, or *Import database* in the console) wraps all of this into one command via [`aiven-db-migrate`](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (official guide). It is the fast path. This post shows the slow path so you understand what the fast path does, and so you can adapt it when your situation does not fit the wizard.
+- Aiven's built-in migration (`avn service update -c migration.host=... -c migration.method=replication`, or *Import database* in the console) wraps all of this into one command via [`aiven-db-migrate`](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (official guide). It is the fast path.
+
+This post shows the slow path so you understand what the fast path does, and so you can adapt it when your situation does not fit the wizard.
 
 ## The two things logical replication refuses to carry: DDL and large objects
 
