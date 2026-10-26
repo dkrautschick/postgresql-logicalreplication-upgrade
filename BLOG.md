@@ -1,10 +1,12 @@
-# Two elephants, one WAL: upgrade PostgreSQL 15 to 18, or migrate from RDS, Cloud SQL and Azure to Aiven, with logical replication and seconds of downtime
+# Two elephants, one WAL
+
+### How to upgrade PostgreSQL 15 to 18, or migrate from RDS, Cloud SQL and Azure to Aiven, with seconds of downtime: one logical replication recipe, a numbered script for every step and a Doppelbock for the road
 
 *All scripts in this post live in the companion repository [dkrautschick/postgresql-logicalreplication-upgrade](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
 
 ## Shrink the maintenance window to seconds
 
-You can upgrade PostgreSQL® 15 to 18, or move a database from RDS, Cloud SQL or Azure to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command (more on that below). The scripts are for when it does not.
+You can upgrade PostgreSQL® 15 to 18, or move a database from RDS, Cloud SQL or Azure to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command, powered by [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (more on that below). The scripts are for when it does not.
 
 The clock is real. PostgreSQL 14 reaches end of life on 12 November 2026, and 15 follows in November 2027. After end of life the PostgreSQL community stops publishing fixes, so Aiven can no longer support that version and the upgrade falls to you. The question is never *if* you upgrade. It is how many minutes of "we're sorry, we'll be right back" you are willing to put in front of your users.
 
@@ -60,7 +62,7 @@ Since then every release has added something:
 | 16          | Logical decoding from a standby, parallel apply of large transactions, `origin = none` for bidirectional setups, non-superuser subscription owners via `pg_create_subscription`                             |
 | 17          | Failover slots (slots survive a primary failover), `pg_createsubscriber` to turn a physical standby into a logical replica, `pg_upgrade` preserves slots and subscriptions                                  |
 | 18          | Generated columns, conflict logging and statistics, `streaming = parallel` by default, two-phase commit toggle on existing subscriptions, `idle_replication_slot_timeout`, `max_active_replication_origins` |
-| 19 (beta 4) | Sequence replication, `ALL TABLES EXCEPT`, `retain_dead_tuples` for `update_deleted` conflict detection, automatic logical WAL level, subscriptions via `postgres_fdw` servers                              |
+| 19 (RC 1)   | Sequence replication, `ALL TABLES EXCEPT`, `retain_dead_tuples` for `update_deleted` conflict detection, automatic logical WAL level, subscriptions via `postgres_fdw` servers                              |
 
 We come back to 18 and 19 at the end. First, the upgrade. Or the migration. Same thing.
 
@@ -83,7 +85,7 @@ A few platform facts before we start typing:
 - `wal_level` is `logical` on every Aiven for PostgreSQL service. Nothing to configure, no restart.
 - `aiven_extras` is preinstalled. Its functions run the superuser-only statements (`CREATE SUBSCRIPTION`, `CREATE PUBLICATION FOR ALL TABLES`, `ALTER SUBSCRIPTION ... REFRESH PUBLICATION`) on your behalf.
 - Replication slots are recreated after failovers and maintenance updates. On Aiven they are *not* carried over an in-place major version upgrade, so finish logical migrations before you upgrade a publisher in place.
-- Aiven's built-in migration (`avn service update -c migration.host=... -c migration.method=replication`, or *Import database* in the console) wraps all of this into one command via `aiven-db-migrate`. It is the fast path. This post shows the slow path so you understand what the fast path does, and so you can adapt it when your situation does not fit the wizard.
+- Aiven's built-in migration (`avn service update -c migration.host=... -c migration.method=replication`, or *Import database* in the console) wraps all of this into one command via [`aiven-db-migrate`](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (official guide). It is the fast path. This post shows the slow path so you understand what the fast path does, and so you can adapt it when your situation does not fit the wizard.
 
 ## The two things logical replication refuses to carry: DDL and large objects
 
@@ -375,7 +377,7 @@ Then open the source firewall for the Aiven service (Aiven static IPs help if yo
 
 The version jump costs nothing extra. A PostgreSQL 13 on RDS can publish to PostgreSQL 18 on Aiven in one go; there is no "upgrade in sequence" rule for logical replication the way there is for in-place upgrades. Check extensions first: every extension on the source needs to exist on the target version, and Aiven's extension list per version is public.
 
-Or skip all of it and let Aiven's migration do the same thing:
+Or skip all of it and let Aiven's migration do the same thing. It is built on [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate), and the [official guide](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) covers the CLI and Python routes. The [prerequisites page](https://aiven.io/docs/products/postgresql/concepts/aiven-db-migrate) lists what the tool checks before it starts: PostgreSQL 10 or newer on the source, `wal_level = logical`, and either superuser access or `aiven_extras`.
 
 ```
 avn service update --project $AVN_PROJECT \
@@ -388,7 +390,7 @@ avn service update --project $AVN_PROJECT \
 avn service migration-status --project $AVN_PROJECT pg-target-18
 ```
 
-The wizard uses logical replication for every database that meets the preconditions and falls back to `pg_dump` for the ones that do not. You now know what those preconditions are, and you know that it does not carry your large objects either.
+The wizard uses logical replication for every database that meets the preconditions and falls back to `pg_dump` for the ones that do not. You now know what those preconditions are, and you know that it does not carry your large objects either. One warning from the docs: running a logical replication migration twice on the same cluster creates duplicate data.
 
 ## When the migration is big: scale, planning, and who helps
 
@@ -414,17 +416,20 @@ PostgreSQL 18 (released 25 September 2025; Aiven uses 18 as the default for new 
 - **`max_active_replication_origins`** is its own setting, so many subscriptions no longer force a high `max_replication_slots`.
 - **`pg_createsubscriber`** gained `--all`, `--clean` and `--enable-two-phase`. It converts a physical standby into a logical subscriber in one step, which is the fastest way to bootstrap a huge logical replica. It needs file-system access to the standby, so it is a self-managed tool. On Aiven the `copy_data` snapshot does the same job over the network.
 
-## What PostgreSQL 19 brings (beta 4, 24 September 2026)
+## What PostgreSQL 19 brings (release candidate 1)
 
-PostgreSQL 19 is in beta at the time of writing, so read the list as "in the beta 4 release notes", not "in your production server next week". The logical replication section is substantial:
+> **Heads-up:** This section reflects PostgreSQL 19 release candidate 1, published on 15 October 2026. Release candidate 2 is planned for 12 November 2026, and general availability is planned for 19 November 2026. We will adjust this section once PostgreSQL 19 is officially released.
+
+Read the list as "in the RC 1 release notes", not "in your production server next week". The logical replication section is substantial:
 
 - **Sequences replicate.** Use `CREATE PUBLICATION ... FOR ALL SEQUENCES`, and `ALTER SUBSCRIPTION ... REFRESH SEQUENCES` syncs their values; `pg_get_sequence_data()` lets you inspect the state. Step 4 of our cutover becomes a one-liner, and the primary key collisions from unsynced sequences go away.
 - **`ALL TABLES EXCEPT (...)`** on publications. Finally a way to say "everything but the 400 GB event archive".
 - **`retain_dead_tuples`** on subscriptions keeps the information needed to detect `update_deleted` conflicts (an update arriving for a row that was concurrently deleted), with `max_retention_duration` as the safety valve, and a new `update_deleted` counter in `pg_stat_subscription_stats`.
-- **Automatic logical WAL level.** With `wal_level = replica`, the server switches to logical decoding when a logical slot needs it, without a restart. `effective_wal_level` reports what is actually in effect. Self-managed sources no longer need the restart that RDS, Cloud SQL and Azure still require today.
+- **Automatic logical WAL level.** With `wal_level = replica`, the server switches to logical decoding when a logical slot needs it, without a restart. `effective_wal_level` reports what is actually in effect. Self-managed sources no longer need the restart that RDS, Cloud SQL and Azure still require today. RC 1 still shipped several fixes for this feature, so test it before you rely on it.
 - **`CREATE SUBSCRIPTION ... SERVER`** takes its connection details from a `postgres_fdw` foreign server, so passwords stop living in subscription definitions.
 - **Per-subscription `wal_receiver_timeout`**, so a slow cross-region link (hello, migration from another continent) does not force a global setting.
-- **`REPACK CONCURRENTLY`**, the successor of `VACUUM FULL` and `CLUSTER`, rebuilds a table without an exclusive lock and uses logical decoding internally to replay changes made during the rebuild. Not replication as such, but the same machinery, and a sign of how central logical decoding has become.
+- **`REPACK (CONCURRENTLY)`**, the new command that replaces `VACUUM FULL` and `CLUSTER`, rebuilds a table without an access-exclusive lock. Not replication as such, but it takes its own replication slots (`max_repack_replication_slots`), a sign of how central that machinery has become.
+- **Renamed statistics column.** In `pg_stat_subscription_stats`, `sync_error_count` becomes `sync_table_error_count`, and the new `sync_seq_error_count` counts sequence sync errors. If you reuse the step 6 query on a PostgreSQL 19 subscriber, adjust the column name.
 
 Still not on the list: DDL replication and large objects. Plan for both the way this post does.
 
@@ -435,8 +440,9 @@ Still not on the list: DDL replication and large objects. Plan for both the way 
 - The cost is an application reconnect, not a long maintenance window, and the old server stays intact as a rollback, optionally kept in sync.
 - Logical replication carries table rows. It does not carry DDL (freeze it, or go target-first for additive changes), large objects (`pg_dump -b` at cutover), or sequences before PostgreSQL 19 (`setval()` at cutover).
 - PostgreSQL 18 made conflicts visible; PostgreSQL 19 makes sequences replicate. Both make the method easier, neither changes it.
-- On Aiven: `wal_level` is already `logical`, `aiven_extras` replaces superuser, and `avn service update -c migration.*` wraps the whole procedure when the standard case fits. The scripts in the repository are for when it does not.
+- On Aiven: `wal_level` is already `logical`, `aiven_extras` replaces superuser, and `avn service update -c migration.*` wraps the whole procedure when the standard case fits (see the [aiven-db-migrate guide](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate)). The scripts in the repository are for when it does not.
 - Check three things before any migration: replica identities, large objects, and extensions on the target version. Check one thing after: no orphaned slot on the source.
-- Next step: clone the repository and run script 01.
 
-Builders who run production databases get a rollback path that `pg_upgrade` cannot offer. Clone [the repository](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade), set `AVN_PROJECT`, and run the scripts in order. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Which is, after all, the whole point.
+**One challenge this post does not cover: extensions.** Every extension on the source has to exist on the target version, and extensions come with their own versions, dependencies and upgrade paths. That deserves a post of its own, and we will cover it separately in a follow-up on upgrading PostgreSQL extensions.
+
+Builders who run production databases get a rollback path that `pg_upgrade` cannot offer, and now you have the scripts to use it. Clone [the repository](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade), set `AVN_PROJECT` and run script 01. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Replication lag is zero, the slot is dropped, and the only thing still catching up is your Doppelbock. Prost.
