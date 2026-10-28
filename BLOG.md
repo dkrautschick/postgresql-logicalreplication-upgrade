@@ -1,12 +1,12 @@
 # Move the elephant, keep the lights on
 
-### How to upgrade PostgreSQL or migrate from RDS, Cloud SQL and Azure to Aiven with logical replication, seconds of downtime and not a drop of beer spilled
+### Upgrade PostgreSQL or migrate from AWS, GCP, Azure or any reachable server to Aiven with logical replication, seconds of downtime and not a drop of beer spilled
 
 *All scripts in this post live in the companion repository [dkrautschick/postgresql-logicalreplication-upgrade](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
 
 ## Shrink the maintenance window to seconds
 
-You can upgrade PostgreSQL® to a new major version, or move a database from RDS, Cloud SQL or Azure to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. The demo upgrades PostgreSQL 15 to 18, but the method does not depend on those two numbers: it works for any upgrade from PostgreSQL 10 (the first release with built-in logical replication) or newer to a later version. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command, powered by [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (more on that below). The scripts are for when it does not.
+You can upgrade PostgreSQL® to a new major version, or move a database from any reachable PostgreSQL server (RDS, Cloud SQL, Azure, bare metal or your own cloud) to Aiven, and keep downtime to the seconds it takes to drain the last changes and reconnect your application. This post shows how, with a numbered script for every step. The demo upgrades PostgreSQL 15 to 18, but the method does not depend on those two numbers: it works for any upgrade from PostgreSQL 10 (the first release with built-in logical replication) or newer to a later version. If your source meets the preconditions, `avn service update -c migration.*` does the same job in one command, powered by [aiven-db-migrate](https://aiven.io/docs/products/postgresql/howto/migrate-aiven-db-migrate) (more on that below). The scripts are for when it does not.
 
 The clock is real. PostgreSQL 14 reaches end of life on 12 November 2026, and 15 follows in November 2027. After end of life the PostgreSQL community stops publishing fixes, so Aiven can no longer support that version and the upgrade falls to you. The question is never *if* you upgrade. It is how many minutes of "we're sorry, we'll be right back" you are willing to put in front of your users.
 
@@ -14,7 +14,7 @@ The classic answer, `pg_upgrade`, is fast and well tested. On Aiven it is a sing
 
 Logical replication offers a different deal. You build the new server next to the old one, let it catch up while production keeps running, verify everything at your own pace, and then flip a connection string. The old server stays intact as a rollback.
 
-**Logical replication does not care where the old server is.** To the subscriber on the new version (PostgreSQL 18 in our demo), a publisher on an older Aiven service (PostgreSQL 15 in our demo), an Amazon RDS instance, a Google Cloud SQL instance, an Azure Flexible Server or a box under somebody's desk all look the same: a hostname, a port, a publication. The procedure for a major upgrade and the procedure for a migration to Aiven are the same procedure. Only the source changes. Every script and every check in this post works for both, and the repository has a switch for it.
+**Logical replication does not care where the old server is.** To the subscriber on the new version (PostgreSQL 18 in our demo), a publisher on an older Aiven service (PostgreSQL 15 in our demo), an Amazon RDS instance, a Google Cloud SQL instance, an Azure Flexible Server or a box under somebody's desk all look the same: a hostname, a port, a publication. The procedure for a major upgrade and the procedure for a migration to Aiven are the same procedure. Only the source changes. Every script and every check in this post works for both, and the repository has a switch for it. In short, the approach works for any PostgreSQL server (version 10 or newer) that your Aiven service can reach over the network and that lets you set `wal_level = logical`.
 
 We start with what logical replication is and what it refuses to carry (DDL and large objects). Then we walk through a full upgrade on Aiven, from PostgreSQL 15 to 18 in our demo, with a check at every step, because "it replicated" and "the data is correct" are two different sentences.
 
@@ -140,7 +140,7 @@ WHERE b.label_lo IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM pg_largeobject_metadata m WHERE m.oid = b.label_lo);
 ```
 
-The fix is `pg_dump` with a filter that drops every table and keeps the large objects, run after writes on the source have stopped, so the labels cannot change behind your back:
+The fix is `pg_dump` with a filter that skips every table and dumps only the large objects, run after writes on the source have stopped, so the labels cannot change behind your back:
 
 ```
 pg_dump "$SRC_URI" --format=custom --data-only --exclude-table='*' -b --file=large-objects.dump
@@ -247,7 +247,7 @@ SELECT aiven_extras.pg_create_subscription(
 
 The connection string carries a password. PostgreSQL 19 can take these details from a `postgres_fdw` server instead (see below), so the password stops living in the subscription.
 
-For a migration the connection string is simply your RDS, Cloud SQL or Azure endpoint. `scripts/04_setup_subscription.sh` builds it from `avn service get --json` (or takes `SRC_URI`), creates the subscription, and polls until every table is live:
+For a migration the connection string is simply the endpoint of your source server, whether that is RDS, Cloud SQL, Azure or a machine you run yourself. `scripts/04_setup_subscription.sh` builds it from `avn service get --json` (or takes `SRC_URI`), creates the subscription, and polls until every table is live:
 
 ```
 -- pg_subscription is superuser-only; aiven_extras wraps it
@@ -319,6 +319,8 @@ Equal count and equal hash means equal content, including the `price_per_litre_c
 
 Run the script while load is active and the table hashes differ, which is correct and a good moment to explain why. Run it after the load stops and they match.
 
+> **Note:** This check is built for the demo and for small to medium tables. It hashes each table as a single value, so it reads and sorts every row, and because one value is limited to 1 GB it fails on very large tables. For those, compare manually and in chunks: count and hash per primary key range, compare counts, minimums, maximums and aggregates on key columns, and spot-check samples. Run the comparison with writes stopped, as at cutover.
+
 ### 8. Cutover: the seconds that matter
 
 Before you start, the go/no-go check is four lines:
@@ -366,9 +368,9 @@ SELECT slot_name, active, wal_status FROM pg_replication_slots;
 
 With `TERMINATE=yes` it also removes both services. The check for orphaned slots is deliberately loud, and on a migration source you run it on the system you are about to decommission, which is exactly when people forget.
 
-## Migrating to Aiven from RDS, Cloud SQL, Azure or anywhere: the same recipe
+## Migrating to Aiven from anywhere: the same recipe
 
-Nothing in the scripts is Aiven-specific on the source side except the `aiven_extras` call for the publication, and that has a plain-SQL branch. If your source meets the wizard's preconditions, use `avn service update -c migration.*` (shown at the end of this section). If it does not, use the scripts. To migrate from somewhere else:
+Nothing in the scripts is Aiven-specific on the source side except the `aiven_extras` call for the publication, and that has a plain-SQL branch. If your source meets the wizard's preconditions, use `avn service update -c migration.*` (shown at the end of this section). If it does not, use the scripts. To migrate from somewhere else, the requirements are the same everywhere: PostgreSQL 10 or newer, `wal_level = logical`, a role that can create the publication and replicate, and a network path from the Aiven service to the source. The table covers the three largest managed providers and self-managed servers, and any other provider follows the same pattern. If a provider does not let you enable logical replication, the fallback is `pg_dump` and `pg_restore`.
 
 | Source                                        | Turn on logical WAL                                                                    | Who can create the publication           |
 |-----------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------|
@@ -376,6 +378,7 @@ Nothing in the scripts is Aiven-specific on the source side except the `aiven_ex
 | Google Cloud SQL                              | flag `cloudsql.logical_decoding = on`, restart; `ALTER USER ... WITH REPLICATION`      | `cloudsqlsuperuser`                      |
 | Azure Database for PostgreSQL Flexible Server | server parameter `wal_level = logical`, restart; `ALTER ROLE ... WITH REPLICATION`     | `azure_pg_admin`                         |
 | Self-managed                                  | `wal_level = logical`, `max_replication_slots`, `max_wal_senders`, `pg_hba.conf` entry | any superuser or role with `REPLICATION` |
+| Any other managed provider                    | the provider's parameter or flag for logical decoding (names differ), then restart     | the provider's admin role                |
 
 Then open the source firewall for the Aiven service (Aiven static IPs help if you must allow-list addresses), set `SOURCE_IS_AIVEN=false` and `SRC_URI` in `.env`, and run scripts 02 to 09 unchanged. The DDL freeze and the large object copy apply exactly as above. A migration source is more likely to have both, because it is older.
 
