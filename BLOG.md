@@ -2,7 +2,7 @@
 
 ### Upgrade PostgreSQL or migrate from AWS, GCP, Azure or any reachable server to Aiven with logical replication, seconds of downtime and not a drop of beer spilled
 
-*All scripts in this post live in the companion repository [dkrautschick/postgresql-logicalreplication-upgrade](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
+*All scripts in this post live in the companion repository [dkrautschick/pg-logical-migration](https://github.com/dkrautschick/pg-logical-migration). Every step references a numbered script you can run against your own Aiven project, and the `listings/` folder has each step as a standalone snippet for copy-paste self-tests. The demo database is `beerdb`, a small craft-beer database, because every example database should contain at least one Doppelbock.*
 
 ## Shrink the maintenance window to seconds
 
@@ -109,7 +109,7 @@ The repository has `scripts/12_ddl_during_migration.sh`, which adds a column (`b
 
 ```
 -- on the target, after the DDL exists on both sides
-SELECT aiven_extras.pg_alter_subscription_refresh_publication('sub_beerdb_from_pg15', TRUE);
+SELECT aiven_extras.pg_alter_subscription_refresh_publication('sub_beerdb_migration', TRUE);
 
 -- did the new table join the party?
 SELECT srrelid::regclass AS table_name, srsubstate
@@ -161,11 +161,11 @@ The repository builds `beerdb`, a small craft-beer database: eight breweries wit
 
 ```
 avn service create --project $AVN_PROJECT --service-type pg --plan startup-4 \
-  --cloud google-europe-west1 -c pg_version=15 pg-source-15
+  --cloud google-europe-west1 -c pg_version=15 pg-source
 avn service create --project $AVN_PROJECT --service-type pg --plan startup-4 \
-  --cloud google-europe-west1 -c pg_version=18 pg-target-18
-avn service wait --project $AVN_PROJECT pg-source-15
-avn service wait --project $AVN_PROJECT pg-target-18
+  --cloud google-europe-west1 -c pg_version=18 pg-target
+avn service wait --project $AVN_PROJECT pg-source
+avn service wait --project $AVN_PROJECT pg-target
 ```
 
 `scripts/01_create_services.sh` does this, creates the `beerdb` database on both, and then checks what it created:
@@ -237,10 +237,10 @@ On a non-Aiven source the same script runs plain `CREATE PUBLICATION pub_beerdb_
 ```
 CREATE EXTENSION IF NOT EXISTS aiven_extras CASCADE;
 SELECT aiven_extras.pg_create_subscription(
-  'sub_beerdb_from_pg15',
-  'host=pg-source-15-....aivencloud.com port=12345 dbname=beerdb user=avnadmin password=... sslmode=require',
+  'sub_beerdb_migration',
+  'host=pg-source-....aivencloud.com port=12345 dbname=beerdb user=avnadmin password=... sslmode=require',
   'pub_beerdb_all',
-  'slot_beerdb_to_pg18',
+  'slot_beerdb_migration',
   TRUE,   -- create the slot on the publisher
   TRUE);  -- copy_data: snapshot every table first, then stream
 ```
@@ -353,7 +353,7 @@ FROM pg_sequences
 WHERE last_value IS NOT NULL AND schemaname NOT IN ('pg_catalog', 'information_schema');
 ```
 
-Point your application at `pg-target-18`. Total write unavailability runs from step 1 to the reconnect: usually seconds, plus however long step 3 takes if your labels are real PNGs.
+Point your application at `pg-target`. Total write unavailability runs from step 1 to the reconnect: usually seconds, plus however long step 3 takes if your labels are real PNGs.
 
 The subscription stays until you decide you are done. If you want a real safety net, `scripts/10_reverse_replication.sh` creates a publication on the new PostgreSQL 18 server and a subscription on the old 15 with `copy_data = FALSE`. Every write that lands on 18 now also lands on 15. Rolling back means pointing the application back. The old server stays a valid fallback only while the reverse subscription runs: once you drop it, new writes on 18 no longer reach 15. Logical replication does not care that the publisher is newer than the subscriber, which gives you a rollback path that `pg_upgrade` cannot offer. In a migration scenario this is the same trick in the other direction: the old RDS instance stays current until you cancel it.
 
@@ -392,9 +392,9 @@ avn service update --project $AVN_PROJECT \
   -c migration.port=5432 -c migration.ssl=true \
   -c migration.username=postgres -c migration.password=... \
   -c migration.dbname=beerdb -c migration.method=replication \
-  pg-target-18
+  pg-target
 
-avn service migration-status --project $AVN_PROJECT pg-target-18
+avn service migration-status --project $AVN_PROJECT pg-target
 ```
 
 The wizard uses logical replication for every database that meets the preconditions and falls back to `pg_dump` for the ones that do not. You now know what those preconditions are, and you know that it does not carry your large objects either. One warning from the docs: running a logical replication migration twice on the same cluster creates duplicate data.
@@ -452,4 +452,4 @@ Still not on the list: DDL replication and large objects. Plan for both the way 
 
 **One challenge this post does not cover: extensions.** Every extension on the source has to exist on the target version, and extensions come with their own versions, dependencies and upgrade paths. That deserves a post of its own, and we will cover it separately in a follow-up on upgrading PostgreSQL extensions.
 
-Builders who run production databases get a rollback path that `pg_upgrade` cannot offer, and now you have the scripts to use it. Clone [the repository](https://github.com/dkrautschick/postgresql-logicalreplication-upgrade), set `AVN_PROJECT` and run script 01. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Replication lag is zero, the slot is dropped, and the only thing still catching up is your Doppelbock. Prost.
+Builders who run production databases get a rollback path that `pg_upgrade` cannot offer, and now you have the scripts to use it. Clone [the repository](https://github.com/dkrautschick/pg-logical-migration), set `AVN_PROJECT` and run script 01. An afternoon and two `startup-4` services later you will have upgraded a database without your users noticing, with every beer label where it belongs. Replication lag is zero, the slot is dropped, and the only thing still catching up is your Doppelbock. Prost.
