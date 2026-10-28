@@ -155,7 +155,7 @@ A third, smaller item in the same family: **sequences.** Identity columns and se
 
 The versions are examples. For any other upgrade path the steps stay identical and only the version numbers change.
 
-The repository builds `beerdb`, a small craft-beer database: eight breweries with names only a DBA could love (WAL Street Brewery, Vacuum Full Brewing, Nullpointer Ales), sixteen beers from Kölsch 9.4 to Streaming Stout, five pubs, 30,000 tastings, a keg log with no primary key, a brew batch sequence, a stored generated column for the price per litre, and a label image per beer stored as a large object. A demo without the annoying parts teaches nothing.
+The repository builds `beerdb`, a small craft-beer database: eight breweries with names only a DBA could love (WAL Street Brewery, Vacuum Full Brewing, Nullpointer Ales), sixteen beers from Pale Ale 9.4 to Streaming Stout, five pubs, 30,000 tastings, a keg log with no primary key, a brew batch sequence, a stored generated column for the price per litre, and a label image per beer stored as a large object. A demo without the annoying parts teaches nothing.
 
 ### 1. Two services, one command each
 
